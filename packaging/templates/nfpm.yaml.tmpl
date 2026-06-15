@@ -1,0 +1,77 @@
+name: ${PKG_NAME}
+arch: "${NFPM_ARCH}"
+platform: linux
+version: "${VERSION}"
+release: 1
+epoch: 0
+section: devel
+priority: optional
+maintainer: "treadonsnow <150224887+unfallenwill@users.noreply.github.com>"
+description: |
+  ${P_DISPLAY} - ${P_GENERIC} (unofficial Linux package).
+  .
+  Unofficial community repackaging of Google's official ${P_DISPLAY} Linux
+  tarball into .deb/.rpm. ${P_DISPLAY} is (c) Google LLC; all rights in the
+  software belong to Google. This package contains no source code and makes no
+  modification to the upstream binaries -- it only rewraps the unmodified
+  official Linux build for convenient apt/dnf installation.
+  .
+  Official site: https://antigravity.google
+vendor: "Google LLC (packaged unofficially by treadonsnow)"
+homepage: https://antigravity.google
+license: "Proprietary - Google LLC"
+
+deb:
+  fields:
+    Source: https://antigravity.google
+    X-Upstream-Version: "${VERSION}"
+    X-Upstream-Build: "${BUILD_ID}"
+  compression: xz
+
+rpm:
+  group: Development/Tools
+
+# Dependencies differ between dpkg and rpm families, so declare them per
+# packager via overrides.
+overrides:
+  deb:
+    depends:
+      - libgtk-3-0
+      - libnotify4
+      - libnss3
+      - libxss1
+      - libxtst6
+      - xdg-utils
+      - libatspi2.0-0
+      - libuuid1
+      - libsecret-1-0
+      - libgbm1
+      - "libasound2 | libasound2t64"
+  rpm:
+    depends:
+      - gtk3
+      - libnotify
+      - nss
+      - libXScrnSaver
+      - libXtst
+      - xdg-utils
+      - at-spi2-atk
+      - libuuid
+      - libsecret
+      - mesa-libgbm
+      - alsa-lib
+
+contents:
+  - src: build/payload
+    dst: ${P_INST}
+  - src: build/wrapper
+    dst: /usr/bin/${P_BIN}
+  - src: build/${PKG_NAME}.desktop
+    dst: /usr/share/applications/${PKG_NAME}.desktop
+  - src: build/icons/hicolor
+    dst: /usr/share/icons/hicolor
+
+scripts:
+  postinstall: build/scripts/postinst
+  preremove: build/scripts/prerm
+  postremove: build/scripts/postrm

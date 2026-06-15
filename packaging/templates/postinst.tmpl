@@ -1,0 +1,19 @@
+#!/bin/sh
+# post-install maintainer script (runs for both .deb and .rpm via nfpm).
+set -e
+
+# Electron's chrome-sandbox requires setuid root; reassert it in case the
+# package manager or a filesystem policy dropped the setuid bit on install.
+if [ -e ${P_INST}/chrome-sandbox ]; then
+  chmod 4755 ${P_INST}/chrome-sandbox 2>/dev/null || true
+fi
+
+# Refresh desktop + icon caches when the tools are available.
+if command -v update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database -q /usr/share/applications 2>/dev/null || true
+fi
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -q -f /usr/share/icons/hicolor 2>/dev/null || true
+fi
+
+exit 0
