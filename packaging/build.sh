@@ -34,11 +34,10 @@ case "$PRODUCT" in
   *) echo "Unknown PRODUCT: $PRODUCT" >&2; exit 1 ;;
 esac
 
-# hub discovery only works for the antigravity product (its bucket is listable).
-if [ "$CHANNEL" = hub ] && [ "$PRODUCT" != antigravity ]; then
-  echo "CHANNEL=hub is only valid for PRODUCT=antigravity; pass URL_X64/URL_ARM for $PRODUCT" >&2
-  exit 1
-fi
+# CHANNEL=hub means "resolve the official source for this product":
+#   antigravity     -> listable GCS bucket (resolve-version.sh)
+#   antigravity-ide -> the IDE's auto-updater API (resolve-ide.sh), always latest
+# stable/custom take explicit URL_X64 / URL_ARM.
 
 case "$ARCH" in
   x64) DEB_ARCH=amd64; RPM_ARCH=x86_64 ;;
@@ -61,10 +60,14 @@ if [ "$ARCH" = x64 ] && [ -n "$URL_X64" ]; then
 elif [ "$ARCH" = arm ] && [ -n "$URL_ARM" ]; then
   URL="$URL_ARM"
 elif [ "$CHANNEL" = hub ]; then
-  echo ">> Resolving hub build-id for $P_DISPLAY $VERSION ..."
-  mapfile -t RES < <("$ROOT/packaging/resolve-version.sh" "$VERSION")
-  BUILD_ID="${RES[0]}"
+  echo ">> Resolving official source for $P_DISPLAY ..."
+  case "$PRODUCT" in
+    antigravity)     mapfile -t RES < <("$ROOT/packaging/resolve-version.sh" "$VERSION") ;;
+    antigravity-ide) mapfile -t RES < <("$ROOT/packaging/resolve-ide.sh") ;;
+  esac
+  VERSION="${RES[0]}"          # resolver prints the (possibly discovered) version
   [ "$ARCH" = x64 ] && URL="${RES[1]}" || URL="${RES[2]}"
+  BUILD_ID="$(printf '%s' "${RES[1]}" | sed -E 's#.*/[0-9]+\.[0-9]+\.[0-9]+-([0-9]+)/.*#\1#' || true)"
 else
   echo "No URL provided for ARCH=$ARCH and CHANNEL=$CHANNEL" >&2; exit 1
 fi

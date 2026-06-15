@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Resolve a hub-channel Antigravity version to its build-id and Linux tarball
-# URLs, by listing Google's public GCS bucket (which is listable).
+# Resolve a hub-channel Antigravity version to its Linux tarball URLs, by
+# listing Google's public GCS bucket (which is listable).
 #
 # Usage: resolve-version.sh <version>
 # Prints three lines:
-#   <build-id>
+#   <version>       (echoed back, e.g. 2.1.4)
 #   <linux-x64 url>
 #   <linux-arm url>
 set -euo pipefail
@@ -30,4 +30,4 @@ ua="${BASE}/antigravity-hub/${VER}-${bid}/linux-arm/Antigravity.tar.gz"
 code="$(curl -fsSL -o /dev/null -w '%{http_code}' -I "$ux" || true)"
 [ "$code" = "200" ] || { echo "x64 tarball not reachable (HTTP $code): $ux" >&2; exit 1; }
 
-printf '%s\n%s\n%s\n' "$bid" "$ux" "$ua"
+printf '%s\n%s\n%s\n' "$VER" "$ux" "$ua"

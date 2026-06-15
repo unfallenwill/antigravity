@@ -5,14 +5,16 @@ name: package
 # <product>-v<version>.
 #
 # Two products share this workflow:
-#   - antigravity      (hub channel; build-id auto-resolved from the listable GCS bucket)
-#   - antigravity-ide  (stable channel; requires explicit upstream URLs)
+#   - antigravity      (hub channel; resolved from the listable GCS bucket)
+#   - antigravity-ide  (resolved from its own auto-updater API, always latest)
 #
 # Triggers:
-#   - workflow_dispatch: package an explicit product + version.
-#   - schedule: auto-discover the latest antigravity hub version and build it
-#     if no antigravity-v<version> release exists yet. (antigravity-ide is
-#     manual-only: the stable CDN is not listable.)
+#   - workflow_dispatch: package one explicit product + version. CHANNEL=hub
+#     auto-resolves the official source for either product; stable/custom take
+#     explicit URLs (needed only for a specific OLDER IDE build).
+#   - schedule: discovers the latest version of BOTH products and, for any that
+#     is not yet released, dispatches a build run for it. (workflow_dispatch is
+#     the one event the GITHUB_TOKEN is allowed to trigger recursively.)
 on:
   workflow_dispatch:
     inputs:
@@ -23,21 +25,21 @@ on:
         default: antigravity
         options: [antigravity, antigravity-ide]
       version:
-        description: "Version, e.g. 2.1.4"
+        description: "Version, e.g. 2.1.4 (ignored for IDE + hub; IDE always builds latest)"
         required: true
         type: string
       channel:
-        description: "Channel (antigravity-ide must use stable/custom + URLs)"
+        description: "Channel (hub = auto-resolve official source)"
         required: true
         type: choice
         default: hub
         options: [hub, stable, custom]
       url_x64:
-        description: "Explicit x64 tarball URL (stable/custom; empty = hub auto-resolve)"
+        description: "Explicit x64 tarball URL (stable/custom only)"
         required: false
         type: string
       url_arm:
-        description: "Explicit arm tarball URL (stable/custom; empty = hub auto-resolve)"
+        description: "Explicit arm tarball URL (stable/custom only)"
         required: false
         type: string
   schedule:
@@ -46,40 +48,43 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   discover:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.find.outputs.version }}
-      build: ${{ steps.find.outputs.build }}
     steps:
-      - name: Find latest antigravity hub version not yet released
-        id: find
+      - uses: actions/checkout@v4
+
+      - name: Discover new versions and dispatch builds
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          curl -fsSL "https://storage.googleapis.com/antigravity-public/?prefix=antigravity-hub/&delimiter=/" -o listing.xml
-          latest="$(grep -oE 'antigravity-hub/[0-9]+\.[0-9]+\.[0-9]+-[0-9]+/' listing.xml \
+          dispatch() { echo ":: New $1 $2 -> dispatching build"; gh workflow run build.yml \
+              -R "${{ github.repository }}" -f product="$1" -f version="$2" -f channel=hub; }
+          released() { gh release view "$1" -R "${{ github.repository }}" >/dev/null 2>&1; }
+
+          # Antigravity (hub): latest from the listable GCS bucket.
+          curl -fsSL "https://storage.googleapis.com/antigravity-public/?prefix=antigravity-hub/&delimiter=/" -o hub.xml
+          latest_hub="$(grep -oE 'antigravity-hub/[0-9]+\.[0-9]+\.[0-9]+-[0-9]+/' hub.xml \
             | sed -E 's#antigravity-hub/([0-9]+\.[0-9]+\.[0-9]+)-[0-9]+/#\1#' \
             | grep -v '^100\.' | sort -uV | tail -1)"
-          echo "Latest antigravity hub version: $latest"
-          if [ -z "$latest" ]; then echo "build=false" >> "$GITHUB_OUTPUT"; exit 0; fi
-          if gh release view "antigravity-v${latest}" -R "${{ github.repository }}" >/dev/null 2>&1; then
-            echo "Already released; nothing to do."
-            echo "build=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "build=true" >> "$GITHUB_OUTPUT"
-            echo "version=${latest}" >> "$GITHUB_OUTPUT"
+          echo "Latest antigravity (hub): ${latest_hub:-none}"
+          if [ -n "$latest_hub" ] && ! released "antigravity-v${latest_hub}"; then
+            dispatch antigravity "$latest_hub"
+          fi
+
+          # Antigravity IDE: latest from its auto-updater API.
+          latest_ide="$(./packaging/resolve-ide.sh | head -1 || true)"
+          echo "Latest antigravity-ide: ${latest_ide:-none}"
+          if [ -n "$latest_ide" ] && ! released "antigravity-ide-v${latest_ide}"; then
+            dispatch antigravity-ide "$latest_ide"
           fi
 
   build:
-    needs: discover
-    if: |
-      always() &&
-      ((github.event_name == 'workflow_dispatch') || (needs.discover.outputs.build == 'true'))
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -93,25 +98,12 @@ jobs:
           go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
 
-      - name: Resolve parameters
-        id: p
-        run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            echo "product=antigravity"             >> "$GITHUB_OUTPUT"
-            echo "version=${{ needs.discover.outputs.version }}" >> "$GITHUB_OUTPUT"
-            echo "channel=hub"                     >> "$GITHUB_OUTPUT"
-          else
-            echo "product=${{ inputs.product }}"   >> "$GITHUB_OUTPUT"
-            echo "version=${{ inputs.version }}"   >> "$GITHUB_OUTPUT"
-            echo "channel=${{ inputs.channel }}"   >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Build packages
         env:
-          PRODUCT: ${{ steps.p.outputs.product }}
-          VERSION: ${{ steps.p.outputs.version }}
+          PRODUCT: ${{ inputs.product }}
+          VERSION: ${{ inputs.version }}
           ARCH: ${{ matrix.arch }}
-          CHANNEL: ${{ steps.p.outputs.channel }}
+          CHANNEL: ${{ inputs.channel }}
           URL_X64: ${{ inputs.url_x64 }}
           URL_ARM: ${{ inputs.url_arm }}
         run: ./packaging/build.sh
@@ -119,7 +111,7 @@ jobs:
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: packages-${{ steps.p.outputs.product }}-${{ matrix.arch }}
+          name: packages-${{ inputs.product }}-${{ matrix.arch }}
           path: dist/
           if-no-files-found: error
           retention-days: 7
@@ -128,6 +120,9 @@ jobs:
     needs: build
     if: always() && needs.build.result == 'success'
     runs-on: ubuntu-latest
+    env:
+      PRODUCT: ${{ inputs.product }}
+      VER: ${{ inputs.version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -137,21 +132,7 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Resolve version + product
-        id: v
-        run: |
-          if [ "${{ github.event_name }}" = "schedule" ]; then
-            echo "product=antigravity"             >> "$GITHUB_OUTPUT"
-            echo "version=${{ needs.discover.outputs.version }}" >> "$GITHUB_OUTPUT"
-          else
-            echo "product=${{ inputs.product }}"   >> "$GITHUB_OUTPUT"
-            echo "version=${{ inputs.version }}"   >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Stage assets and checksums
-        env:
-          PRODUCT: ${{ steps.v.outputs.product }}
-          VER: ${{ steps.v.outputs.version }}
         run: |
           set -euo pipefail
           mkdir -p assets
@@ -162,13 +143,10 @@ jobs:
       - name: Create or update release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PRODUCT: ${{ steps.v.outputs.product }}
-          VER: ${{ steps.v.outputs.version }}
         run: |
           set -euo pipefail
           TAG="${PRODUCT}-v${VER}"
           DISPLAY="Antigravity"; [ "$PRODUCT" = "antigravity-ide" ] && DISPLAY="Antigravity IDE"
-
           {
             echo "${DISPLAY} ${VER} — unofficial Linux packages"
             echo

@@ -59,13 +59,12 @@ Requirements: `curl`, `tar`, `perl`, and
 (`go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest`).
 
 ```bash
-# Antigravity (hub): only the version is needed — build-id is discovered.
+# Antigravity (hub): version resolves from the listable GCS bucket.
 PRODUCT=antigravity VERSION=2.1.4 ARCH=x64 ./packaging/build.sh
 
-# Antigravity IDE (stable): pass the upstream URLs explicitly.
-PRODUCT=antigravity-ide VERSION=2.0.4 ARCH=x64 CHANNEL=stable \
-  URL_X64='https://edgedl.me.gvt1.com/.../linux-x64/Antigravity%20IDE.tar.gz' \
-  ./packaging/build.sh
+# Antigravity IDE: CHANNEL=hub auto-resolves the latest via the updater API.
+PRODUCT=antigravity-ide VERSION=2.0.4 ARCH=x64 CHANNEL=hub ./packaging/build.sh
+# (use CHANNEL=stable + URL_X64/URL_ARM only to pin a specific older IDE build)
 ```
 
 Output lands in `dist/` (`*.deb`, `*.rpm`, `checksums_*.txt`). `ARCH` is `x64`
@@ -75,23 +74,32 @@ or `arm`.
 
 There are two triggers (see [`.github/workflows/build.yml`](.github/workflows/build.yml)):
 
-- **Manual** — `workflow_dispatch` with product + version (and channel / URLs
-  for the stable channel).
-- **Scheduled** — a cron job lists Google's public `antigravity-public` GCS
-  bucket, computes the latest **Antigravity (hub)** version, and if no matching
-  `antigravity-v<version>` release tag exists yet, builds and publishes it.
+- **Manual** — `workflow_dispatch` with product + version. `CHANNEL=hub`
+  auto-resolves the official source for either product, so you normally don't
+  need to paste URLs. (`stable`/`custom` + explicit URLs are only for a specific
+  older IDE build, since the IDE's update API exposes only the latest.)
+- **Scheduled** — a cron job discovers the latest version of **both** products
+  and, for any not yet released, dispatches a build run:
+  - **Antigravity** — latest semver from the listable `antigravity-public` GCS
+    bucket (`packaging/resolve-version.sh`).
+  - **Antigravity IDE** — latest from its own auto-updater API
+    (`packaging/resolve-ide.sh`). The IDE is a VS Code fork whose "Check for
+    Updates" menu is wired to a hardcoded Cloud Run endpoint
+    `antigravity-ide-auto-updater-…run.app/api/update/<platform>/stable/0`
+    (its `product.json` `updateUrl` is a dummy `example.com` that only keeps the
+    menu enabled). Passing commit `0` returns the latest release JSON,
+    including the canonical download URL.
 
 **How "is it released" is decided:** a version counts as released iff a GitHub
 release tagged `<product>-v<version>` exists in this repo. Each successful build
 creates that tag, so the set of tags is the source of truth — no separate state
-file. Auto-discovery only watches the Antigravity hub channel (the only listable
-source); **Antigravity IDE** (stable CDN, not listable) is packaged by manual
-dispatch with explicit URLs.
+file.
 
-Two caveats by design: discovery tracks the semver, not the build-id, so a
-re-release of the same semver with a new build-id is skipped automatically
-(re-dispatch manually, which re-uploads with `--clobber`); and historical
-versions are packaged on request, not retroactively.
+Caveats: discovery tracks the product version (semver for Antigravity, the
+`x.y.z` parsed from the IDE download URL), not the build-id, so a re-release of
+the same version with a new build-id is skipped automatically (re-dispatch
+manually, which re-uploads with `--clobber`); and historical versions are
+packaged on request, not retroactively.
 
 ## Disclaimer & license
 
