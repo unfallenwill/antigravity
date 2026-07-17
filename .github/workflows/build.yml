@@ -5,8 +5,8 @@ name: package
 # <product>-v<version>.
 #
 # Two products share this workflow:
-#   - antigravity      (hub channel; resolved from the listable GCS bucket)
-#   - antigravity-ide  (resolved from its own auto-updater API, always latest)
+#   - antigravity      (hub channel; resolved from its official releases API)
+#   - antigravity-ide  (resolved from its official releases API)
 #
 # Triggers:
 #   - workflow_dispatch: package one explicit product + version. CHANNEL=hub
@@ -25,7 +25,7 @@ on:
         default: antigravity
         options: [antigravity, antigravity-ide]
       version:
-        description: "Version, e.g. 2.1.4 (ignored for IDE + hub; IDE always builds latest)"
+        description: "Version, e.g. 2.3.1 or 2.1.1"
         required: true
         type: string
       channel:
@@ -54,33 +54,34 @@ jobs:
   discover:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        product: [antigravity, antigravity-ide]
     steps:
       - uses: actions/checkout@v4
 
-      - name: Discover new versions and dispatch builds
+      - name: Discover new ${{ matrix.product }} version and dispatch build
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          dispatch() { echo ":: New $1 $2 -> dispatching build"; gh workflow run build.yml \
-              -R "${{ github.repository }}" -f product="$1" -f version="$2" -f channel=hub; }
-          released() { gh release view "$1" -R "${{ github.repository }}" >/dev/null 2>&1; }
+          product="${{ matrix.product }}"
+          case "$product" in
+            antigravity) release="$(./packaging/resolve-version.sh)" ;;
+            antigravity-ide) release="$(./packaging/resolve-ide.sh)" ;;
+          esac
+          latest="${release%%$'\n'*}"
+          [ -n "$latest" ] || { echo "No release found for $product" >&2; exit 1; }
+          echo "Latest $product: $latest"
 
-          # Antigravity (hub): latest from the listable GCS bucket.
-          curl -fsSL "https://storage.googleapis.com/antigravity-public/?prefix=antigravity-hub/&delimiter=/" -o hub.xml
-          latest_hub="$(grep -oE 'antigravity-hub/[0-9]+\.[0-9]+\.[0-9]+-[0-9]+/' hub.xml \
-            | sed -E 's#antigravity-hub/([0-9]+\.[0-9]+\.[0-9]+)-[0-9]+/#\1#' \
-            | grep -v '^100\.' | sort -uV | tail -1)"
-          echo "Latest antigravity (hub): ${latest_hub:-none}"
-          if [ -n "$latest_hub" ] && ! released "antigravity-v${latest_hub}"; then
-            dispatch antigravity "$latest_hub"
-          fi
-
-          # Antigravity IDE: latest from its auto-updater API.
-          latest_ide="$(./packaging/resolve-ide.sh | head -1 || true)"
-          echo "Latest antigravity-ide: ${latest_ide:-none}"
-          if [ -n "$latest_ide" ] && ! released "antigravity-ide-v${latest_ide}"; then
-            dispatch antigravity-ide "$latest_ide"
+          tag="${product}-v${latest}"
+          if gh release view "$tag" -R "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "$tag is already released"
+          else
+            echo "New $product $latest -> dispatching build"
+            gh workflow run build.yml -R "${{ github.repository }}" \
+              -f product="$product" -f version="$latest" -f channel=hub
           fi
 
   build:

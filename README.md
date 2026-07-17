@@ -59,12 +59,11 @@ Requirements: `curl`, `tar`, `perl`, and
 (`go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest`).
 
 ```bash
-# Antigravity (hub): version resolves from the listable GCS bucket.
-PRODUCT=antigravity VERSION=2.1.4 ARCH=x64 ./packaging/build.sh
+# Antigravity (hub): version resolves from the official releases API.
+PRODUCT=antigravity VERSION=2.3.1 ARCH=x64 ./packaging/build.sh
 
-# Antigravity IDE: CHANNEL=hub auto-resolves the latest via the updater API.
-PRODUCT=antigravity-ide VERSION=2.0.4 ARCH=x64 CHANNEL=hub ./packaging/build.sh
-# (use CHANNEL=stable + URL_X64/URL_ARM only to pin a specific older IDE build)
+# Antigravity IDE: the requested version resolves from its releases API.
+PRODUCT=antigravity-ide VERSION=2.1.1 ARCH=x64 CHANNEL=hub ./packaging/build.sh
 ```
 
 Output lands in `dist/` (`*.deb`, `*.rpm`, `checksums_*.txt`). `ARCH` is `x64`
@@ -75,20 +74,18 @@ or `arm`.
 There are two triggers (see [`.github/workflows/build.yml`](.github/workflows/build.yml)):
 
 - **Manual** — `workflow_dispatch` with product + version. `CHANNEL=hub`
-  auto-resolves the official source for either product, so you normally don't
-  need to paste URLs. (`stable`/`custom` + explicit URLs are only for a specific
-  older IDE build, since the IDE's update API exposes only the latest.)
+  resolves that version from the product's official releases API, so you
+  normally don't need to paste URLs. Use `stable`/`custom` + explicit URLs only
+  for a build that is no longer present in the API.
 - **Scheduled** — a cron job discovers the latest version of **both** products
   and, for any not yet released, dispatches a build run:
-  - **Antigravity** — latest semver from the listable `antigravity-public` GCS
-    bucket (`packaging/resolve-version.sh`).
-  - **Antigravity IDE** — latest from its own auto-updater API
-    (`packaging/resolve-ide.sh`). The IDE is a VS Code fork whose "Check for
-    Updates" menu is wired to a hardcoded Cloud Run endpoint
-    `antigravity-ide-auto-updater-…run.app/api/update/<platform>/stable/0`
-    (its `product.json` `updateUrl` is a dummy `example.com` that only keeps the
-    menu enabled). Passing commit `0` returns the latest release JSON,
-    including the canonical download URL.
+  - **Antigravity** — latest semver from the hub releases API
+    (`packaging/resolve-version.sh`).
+  - **Antigravity IDE** — latest semver from the IDE releases API
+    (`packaging/resolve-ide.sh`).
+
+The scheduled discovery jobs run independently, so a temporary failure in one
+product's upstream API does not cancel discovery for the other product.
 
 **How "is it released" is decided:** a version counts as released iff a GitHub
 release tagged `<product>-v<version>` exists in this repo. Each successful build

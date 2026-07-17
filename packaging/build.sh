@@ -9,9 +9,9 @@
 #   URL_X64  (optional)  explicit x64 tarball URL (stable/custom)
 #   URL_ARM  (optional)  explicit arm tarball URL (stable/custom)
 #
-# For PRODUCT=antigravity + CHANNEL=hub the build-id is resolved from the
-# listable public GCS bucket, so callers only need VERSION. All other cases
-# require explicit URL_X64 / URL_ARM for each built arch.
+# For CHANNEL=hub the build-id is resolved from the product's official releases
+# API, so callers only need PRODUCT and VERSION. Other channels require an
+# explicit URL_X64 / URL_ARM for each built architecture.
 set -euo pipefail
 
 PRODUCT="${PRODUCT:?PRODUCT is required (antigravity | antigravity-ide)}"
@@ -35,8 +35,8 @@ case "$PRODUCT" in
 esac
 
 # CHANNEL=hub means "resolve the official source for this product":
-#   antigravity     -> listable GCS bucket (resolve-version.sh)
-#   antigravity-ide -> the IDE's auto-updater API (resolve-ide.sh), always latest
+#   antigravity     -> hub releases API (resolve-version.sh)
+#   antigravity-ide -> IDE releases API (resolve-ide.sh)
 # stable/custom take explicit URL_X64 / URL_ARM.
 
 case "$ARCH" in
@@ -63,7 +63,7 @@ elif [ "$CHANNEL" = hub ]; then
   echo ">> Resolving official source for $P_DISPLAY ..."
   case "$PRODUCT" in
     antigravity)     mapfile -t RES < <("$ROOT/packaging/resolve-version.sh" "$VERSION") ;;
-    antigravity-ide) mapfile -t RES < <("$ROOT/packaging/resolve-ide.sh") ;;
+    antigravity-ide) mapfile -t RES < <("$ROOT/packaging/resolve-ide.sh" "$VERSION") ;;
   esac
   VERSION="${RES[0]}"          # resolver prints the (possibly discovered) version
   [ "$ARCH" = x64 ] && URL="${RES[1]}" || URL="${RES[2]}"
